@@ -7,6 +7,13 @@ import datasets
 from model_settings import ModelSettings
 from collections import deque
 
+def clean_ingoing(notnat_ingoing: dict, selected_node: int):
+    for key in notnat_ingoing:
+        notnat_ingoing[key].discard(selected_node)
+    return notnat_ingoing
+
+
+
 # Perform one step
 # G: the current network
 # notnat: indices of nodes that are not natted
@@ -25,9 +32,9 @@ def one_step(G: nx.Graph, notnat: set, indices: deque, notnat_ingoing: dict, mod
         else: # not natted
             newout = rand.choice(np.array(list(notnat)), size=model_settings.outgoing, replace=False)
             notnat.add(nextnode)
-            notnat_ingoing[nextnode] = []
+            notnat_ingoing[nextnode] = set()
         for l in newout:
-            notnat_ingoing[l].append(nextnode)
+            notnat_ingoing[l].add(nextnode)
             G.add_edge(nextnode, l)
     else: # Exit node
         selected_node = rand.choice(np.array(G.nodes))
@@ -35,11 +42,16 @@ def one_step(G: nx.Graph, notnat: set, indices: deque, notnat_ingoing: dict, mod
         if selected_node in notnat: # rewire outgoing connections
             notnat.remove(selected_node)
             for i in notnat_ingoing[selected_node]:
+                if not G.has_node(i):
+                    print(f"Does not have node {i}")
+                    raise ValueError()
                 alreadylinked = set(G.adj[i].keys())
                 viable = notnat.intersection(alreadylinked)
                 if len(viable) > 0:
                     newcon = rand.choice(np.array(list(viable)))
                     G.add_edge(i,newcon)
+            notnat_ingoing.pop(selected_node)
+        notnat_ingoing = clean_ingoing(notnat_ingoing, selected_node) # Ensures on occurences of removed node
         G.remove_node(selected_node) # remove node
     return G, notnat, indices, notnat_ingoing
 
@@ -57,7 +69,7 @@ def simulate(model_settings: ModelSettings, steps: int, seed = None):
     G = datasets.complete_graph(N)
     notnat_ingoing = {}
     for i in range(N):
-        notnat_ingoing[i] = [j for j in range(N) if j != i]
+        notnat_ingoing[i] = set([j for j in range(N) if j != i])
     notnat = set(range(N))
     indices = deque()
     for i in range(steps):
@@ -66,5 +78,5 @@ def simulate(model_settings: ModelSettings, steps: int, seed = None):
 
 
 if __name__ == "__main__":
-    modelsettings = ModelSettings(0.9,0.5,8,9)
-    print(simulate(modelsettings, 10000))
+    modelsettings = ModelSettings(0.78,0.5,8,9)
+    print(simulate(modelsettings, 1000))
