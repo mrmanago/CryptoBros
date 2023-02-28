@@ -5,4 +5,5 @@ import numpy as np
 class ModelSettings:
     q: int # Probability of adding or exiting
     p: float # Probability of being natted
-    outgoing_dist: np.array # Distribution of outgoing links
+    outgoing_nat: int # Default # of outgoing links for natted nodes
+    outgoing: int # Default # of outgoing links for non-natted nodes
