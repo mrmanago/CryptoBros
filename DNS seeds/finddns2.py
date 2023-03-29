@@ -4,7 +4,7 @@ import csv
 import time
 from datetime import datetime
 
-url = "https://wiz.biz/bitcoin/seed/1"
+url = "https://wiz.biz/bitcoin/seed/2"
 ipv4_counts = {}
 
 while True:
@@ -19,7 +19,7 @@ while True:
 
     ipv4_tags = soup.find_all('pre')[0].find_all('br')
 
-    with open('ipv4_addresses1.csv', mode='a', newline='') as file:
+    with open('ipv4_addresses2.csv', mode='a', newline='') as file:
         writer = csv.writer(file)
         if file.tell() == 0:
             writer.writerow(['IPv4 Address', 'Information', 'Count', 'Timestamp',])
