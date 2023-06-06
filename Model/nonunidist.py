@@ -12,6 +12,30 @@ from model_settings import ModelSettings
 import seaborn as sns
 from collections import deque
 from typing import Iterable
+from scipy.interpolate import interp1d
+
+
+df = pd.read_csv('Model/ipv424hrs_num_ordered_s1.csv')  # replace 'your_file.csv' with your actual CSV filename
+data = df.groupby('IP Address').size().reset_index(name='Count')
+data['Probability'] = data['Count'] / data['Count'].sum()
+
+# Prepare probabilities for nodes
+node_probabilities = data['Probability'].values
+
+def resize_probabilities(probabilities, new_size):
+    old_size = len(probabilities)
+    old_indices = np.linspace(0, old_size-1, old_size)
+    new_indices = np.linspace(0, old_size-1, new_size)
+    
+    interpolator = interp1d(old_indices, probabilities, kind='linear')
+    new_probabilities = interpolator(new_indices)
+    
+    # Normalize the probabilities to sum to 1
+    new_probabilities = new_probabilities / new_probabilities.sum()
+    
+    return new_probabilities
+
+
 
 def clean_ingoing(notnat_ingoing: dict, selected_node: int):
     for key in notnat_ingoing:
@@ -24,7 +48,7 @@ def clean_ingoing(notnat_ingoing: dict, selected_node: int):
 # indices: indices of removed nodes
 # notnat_ingoing: all the nodes that established a connection with a particular notnatted node
 # model_settings: the settings that can be used
-def one_step(G: nx.Graph, notnat: set, indices: deque, notnat_ingoing: dict, model_settings: ModelSettings, rand: Generator) -> (nx.Graph, set, deque, dict):
+def one_step(G: nx.Graph, notnat: set, indices: deque, notnat_ingoing: dict, model_settings: ModelSettings, rand: Generator, ip_to_node: dict, probabilities: np.array) -> (nx.Graph, set, deque, dict):
     if rand.random() < model_settings.q:  # Add node
         if len(indices) == 0: # index to use for next node
             nextnode = G.size()
@@ -32,16 +56,16 @@ def one_step(G: nx.Graph, notnat: set, indices: deque, notnat_ingoing: dict, mod
             nextnode = indices.pop()
         G.add_node(nextnode)
         if rand.random() < model_settings.p: # Natted
-            newout = rand.choice(np.array(list(notnat)), size=model_settings.outgoing_nat, replace=False)
+            newout = rand.choice(np.array(list(notnat)), p=probabilities, size=model_settings.outgoing_nat, replace=False)
         else: # not natted
-            newout = rand.choice(np.array(list(notnat)), size=model_settings.outgoing, replace=False)
+            newout = rand.choice(np.array(list(notnat)), p=probabilities, size=model_settings.outgoing, replace=False)
             notnat.add(nextnode)
             notnat_ingoing[nextnode] = set()
         for l in newout:
             notnat_ingoing[l].add(nextnode)
             G.add_edge(nextnode, l)
     else: # Exit node
-        selected_node = rand.choice(np.array(G.nodes))
+        selected_node = rand.choice(np.array(list(notnat)), p=probabilities)
         indices.append(selected_node)
         if selected_node in notnat: # rewire outgoing connections
             notnat.remove(selected_node)
@@ -55,7 +79,7 @@ def one_step(G: nx.Graph, notnat: set, indices: deque, notnat_ingoing: dict, mod
                     newcon = rand.choice(np.array(list(viable)))
                     G.add_edge(i,newcon)
             notnat_ingoing.pop(selected_node)
-        notnat_ingoing = clean_ingoing(notnat_ingoing, selected_node) # Ensures on occurences of removed node
+        notnat_ingoing = clean_ingoing(notnat_ingoing, selected_node) # Ensures no occurrences of removed node
         G.remove_node(selected_node) # remove node
     return G, notnat, indices, notnat_ingoing
 
@@ -66,39 +90,41 @@ def one_step(G: nx.Graph, notnat: set, indices: deque, notnat_ingoing: dict, mod
 # Simulate the evolution of the graph for {steps} runs
 # model_settings: specify parameters for simulation
 # size overrides the steps function and will simulate until graph reaches desired
-def simulate(model_settings: ModelSettings, steps: int, seed = None, size = None):
+def simulate(model_settings: ModelSettings, steps: int, seed = None, size = None, data = None, ip_to_node = None):
     rand = default_rng(12345)
     if seed is not None:
         rand = default_rng(seed)
-    N = model_settings.outgoing + 1
+    N = model_settings.outgoing + 20
     G = datasets.complete_graph(N)
     notnat_ingoing = {}
     for i in range(N):
         notnat_ingoing[i] = set([j for j in range(N) if j != i])
     notnat = set(range(N))
     indices = deque()
+
+    ip_to_node = {ip: index for index, ip in enumerate(data['IP Address'].unique())}
+
+    # Initialize probabilities array
+    probabilities = np.zeros(max(ip_to_node.values()) + 1)
+    for ip_address, count in zip(data['IP Address'], data['Count']):
+        if ip_to_node is None:
+            node = ip_address
+        else:
+            node = ip_to_node[ip_address]
+        probabilities[node] = count
+    total_count = np.sum(probabilities)
+    probabilities /= total_count  # Normalize the probabilities
+    
     i = 0
     while i < steps or size is not None:
-        G, notnat, indices, notnat_ingoing = one_step(G,notnat, indices, notnat_ingoing ,model_settings, rand)
+        probabilities = resize_probabilities(probabilities, len(notnat))  # Resize probabilities
+        G, notnat, indices, notnat_ingoing = one_step(G, notnat, indices, notnat_ingoing ,model_settings, rand, ip_to_node, probabilities)
         i += 1
         if G.number_of_nodes() == size:
             break
     return G
 
-def simulate_many_runs(settings: ModelSettings, seed=1234, nr_runs=100, size=1000) -> np.array:
-    try:
-        with open(f"CryptoNet,{str(seed)},runs={nr_runs},p={str(settings.p)},q={str(settings.q)},nat={str(settings.outgoing_nat)},out={str(settings.outgoing)}.pkl", "rb") as f:
-            G = pickle.load(f)
-    except:
-        G = np.empty(nr_runs, dtype=object)
-        for i in range(nr_runs):
-            rand = np.random.default_rng(seed + i*0xdeadbeef)
-            K = simulate(settings, 1000, seed = seed, size = size)
-            G[i] = K
-            print("finished iteration " + str(i))
-        with open(f"CryptoNet,{str(seed)},runs={nr_runs},p={str(settings.p)},q={str(settings.q)},nat={str(settings.outgoing_nat)},out={str(settings.outgoing)}.pkl", "wb") as f:
-            pickle.dump(G, f)
-    return G
+
 
 def round_up(num: float, decimals: int = 0):
     """Round to given number of decimals with positive bias. I could not find it, but is there really no standard function for this?"""
@@ -187,13 +213,13 @@ def plot_degree_variance_for_natting_effects(q: float, outgoing: int, p_range: I
     plt.ylabel("Degree variance", size=14)
 
 if __name__ == "__main__":
-    modelsettings = ModelSettings(1,0.7,1,8)
+    modelsettings = ModelSettings(1,0.99,1,10)
     steps = 1
     seed = 14235235231523
-    size = 50000
+    size = 20000
     # test
     print("test")
-    G = simulate(modelsettings, steps, seed, size)
+    G = simulate(modelsettings, steps, seed, size, data)
     print("test")
     nx.write_graphml(G, "my_graph1.graphml")
     #print(simulate_many_runs(modelsettings, nr_runs=10, size = 1000)[0])
