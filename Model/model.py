@@ -24,7 +24,8 @@ def clean_ingoing(notnat_ingoing: dict, selected_node: int):
 # indices: indices of removed nodes
 # notnat_ingoing: all the nodes that established a connection with a particular notnatted node
 # model_settings: the settings that can be used
-def one_step(G: nx.Graph, notnat: set, indices: deque, notnat_ingoing: dict, model_settings: ModelSettings, rand: Generator) -> (nx.Graph, set, deque, dict):
+def one_step(G: nx.Graph, notnat: set, indices: deque, notnat_ingoing: dict, model_settings: ModelSettings, rand: Generator):
+    nextnode = -1
     if rand.random() < model_settings.q:  # Add node
         if len(indices) == 0: # index to use for next node
             nextnode = G.size()
@@ -57,7 +58,7 @@ def one_step(G: nx.Graph, notnat: set, indices: deque, notnat_ingoing: dict, mod
             notnat_ingoing.pop(selected_node)
         notnat_ingoing = clean_ingoing(notnat_ingoing, selected_node) # Ensures on occurences of removed node
         G.remove_node(selected_node) # remove node
-    return G, notnat, indices, notnat_ingoing
+    return G, notnat, indices, notnat_ingoing, nextnode
 
 ### TODO: 
 # - ensure no indexing issues when sampling from a small notnat
@@ -67,9 +68,10 @@ def one_step(G: nx.Graph, notnat: set, indices: deque, notnat_ingoing: dict, mod
 # model_settings: specify parameters for simulation
 # size overrides the steps function and will simulate until graph reaches desired
 def simulate(model_settings: ModelSettings, steps: int, seed = None, size = None):
-    rand = default_rng(12345)
     if seed is not None:
-        rand = default_rng(seed)
+        seed = 12345
+    rand = default_rng(seed)
+    evolution = []
     N = model_settings.outgoing + 1
     G = datasets.complete_graph(N)
     notnat_ingoing = {}
@@ -79,11 +81,23 @@ def simulate(model_settings: ModelSettings, steps: int, seed = None, size = None
     indices = deque()
     i = 0
     while i < steps or size is not None:
-        G, notnat, indices, notnat_ingoing = one_step(G,notnat, indices, notnat_ingoing ,model_settings, rand)
+        G, notnat, indices, notnat_ingoing, new_index = one_step(G,notnat, indices, notnat_ingoing ,model_settings, rand)
+        evolution.append((G.copy(),new_index))
         i += 1
         if G.number_of_nodes() == size:
             break
-    return G
+    return G, evolution
+
+def getEvolution(settings: ModelSettings, steps: int, seed = None, size = None):
+    try:
+        with open(f"CryptoNet,{str(seed)},steps={steps},p={str(settings.p)},q={str(settings.q)},nat={str(settings.outgoing_nat)},out={str(settings.outgoing)}.pkl", "rb") as f:
+            evolution = pickle.load(f)
+    except:
+        G, evolution = simulate(settings, steps, seed, size)
+        with open(f"CryptoNet,{str(seed)},steps={steps},p={str(settings.p)},q={str(settings.q)},nat={str(settings.outgoing_nat)},out={str(settings.outgoing)}.pkl", "wb") as f:
+            evolution = pickle.dump(evolution,f)
+    return evolution
+
 
 def simulate_many_runs(settings: ModelSettings, seed=1234, nr_runs=100, size=1000) -> np.array:
     try:
@@ -187,17 +201,11 @@ def plot_degree_variance_for_natting_effects(q: float, outgoing: int, p_range: I
     plt.ylabel("Degree variance", size=14)
 
 if __name__ == "__main__":
-    modelsettings = ModelSettings(1,0.7,1,8)
-    steps = 1
-    seed = 14235235231523
-    size = 50000
+    modelsettings = ModelSettings(1,0.5,8,9)
     # test
-    print("test")
-    G = simulate(modelsettings, steps, seed, size)
-    print("test")
-    nx.write_graphml(G, "my_graph1.graphml")
+    evolution = getEvolution(modelsettings, 1000)
     #print(simulate_many_runs(modelsettings, nr_runs=10, size = 1000)[0])
-    # p_range = [0.1,0.2]
-    # out_range = [1,2]
-    # plot_degree_variance_for_natting_effects(1,9,p_range,out_range)
-    # plt.show()
+    #p_range = [0.1,0.2]
+    #out_range = [1,2]
+    #plot_degree_variance_for_natting_effects(1,9,p_range,out_range)
+    plt.show()
